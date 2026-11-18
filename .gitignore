@@ -28,6 +28,8 @@
 /06_CODIGO/MAP-001/*
 !/06_CODIGO/MAP-001/Preparar-Mirante.ps1
 !/06_CODIGO/MAP-001/Testar-Mirante.ps1
+!/06_CODIGO/MAP-001/Build-Mirante-Visual.ps1
+!/06_CODIGO/MAP-001/Deploy-Mirante-Visual.ps1
 !/06_CODIGO/ALPHA-001/
 /06_CODIGO/ALPHA-001/*
 !/06_CODIGO/ALPHA-001/*.ps1
