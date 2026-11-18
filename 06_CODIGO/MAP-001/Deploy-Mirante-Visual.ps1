@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param([switch]$Restore,[switch]$Play)
+param(
+    [switch]$Restore,[switch]$Play,
+    [ValidateSet('v003','v004')][string]$Version = 'v004'
+)
 $ErrorActionPreference = 'Stop'
 if ($Restore -and $Play) { throw 'Choose Restore or Play.' }
 if (Get-Process bio4 -ErrorAction SilentlyContinue) { throw 'Close RE4 before changing the local map.' }
@@ -17,8 +20,8 @@ foreach ($path in @($root,(Split-Path $map),$map,(Split-Path $runtime),$runtime,
         throw "Unsupported linked path: $path"
     }
 }
-$manifest = Get-Content -LiteralPath (Join-Path $map 'v003\manifest.json') -Raw | ConvertFrom-Json
-$source = Join-Path $map 'v003\44000100.pack.lfs'
+$manifest = Get-Content -LiteralPath (Join-Path $map "$Version\manifest.json") -Raw | ConvertFrom-Json
+$source = Join-Path $map "$Version\44000100.pack.lfs"
 $wanted = $manifest.SHA256
 if ($Restore) {
     $source = Join-Path $map "v001\Editor\BIO4\$relative"
@@ -26,7 +29,12 @@ if ($Restore) {
 }
 if ((Get-FileHash -LiteralPath $source).Hash -ne $wanted) { throw 'Build source hash mismatch.' }
 $present = (Get-FileHash -LiteralPath $target).Hash
-if ($present -notin @($manifest.SHA256,$manifest.BaseSHA256)) { throw 'Unknown local PACK. Aborting.' }
+$known = @($manifest.BaseSHA256)
+foreach ($variant in 'v003','v004') {
+    $path = Join-Path $map "$variant\manifest.json"
+    if (Test-Path -LiteralPath $path) { $known += (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).SHA256 }
+}
+if ($present -notin $known) { throw 'Unknown local PACK. Aborting.' }
 if ($present -ne $wanted) {
     $stage = Join-Path (Split-Path $target) ("mirante-{0}.tmp" -f [guid]::NewGuid())
     try {
@@ -38,7 +46,8 @@ if ($present -ne $wanted) {
     }
 }
 if ((Get-FileHash -LiteralPath $target).Hash -ne $wanted) { throw 'Local PACK hash mismatch.' }
-Write-Output "Local r100 PACK verified: $wanted"
+if ($Restore) { Write-Output "Original r100 PACK restored. No game was launched: $wanted"; return }
+Write-Output "Local r100 PACK installed ($Version): $wanted"
 if ($Play) {
     Start-Process -FilePath $exe -WorkingDirectory $bin -ArgumentList ('-gamedir "{0}" -room r100' -f $bio)
 }

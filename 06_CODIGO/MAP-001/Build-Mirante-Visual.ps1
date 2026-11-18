@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param([ValidatePattern('^v[0-9]+$')][string]$Version = 'v003')
+param(
+    [ValidatePattern('^v[0-9]+$')][string]$Version = 'v003',
+    [switch]$Diagnostic
+)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $base = Join-Path $root '07_TESTES\MAP-001\v001'
@@ -32,6 +35,54 @@ $changed = foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $work $stem)
     [IO.File]::WriteAllBytes($file.FullName,$bytes)
     $file.Name
 }
+if ($Diagnostic) {
+    Add-Type -TypeDefinition @'
+using System;
+public static class MiranteDxt1
+{
+    public static void Mark(byte[] data)
+    {
+        if (data.Length < 128 || BitConverter.ToUInt32(data, 0) != 0x20534444 ||
+            BitConverter.ToUInt32(data, 4) != 124 ||
+            BitConverter.ToUInt32(data, 84) != 0x31545844)
+            throw new ArgumentException("Expected a legacy DXT1 DDS.");
+        int height = BitConverter.ToInt32(data, 12);
+        int width = BitConverter.ToInt32(data, 16);
+        int levels = Math.Max(1, BitConverter.ToInt32(data, 28));
+        if (height < 1 || height > 16384 || width < 1 || width > 16384 || levels > 15)
+            throw new ArgumentException("Unexpected DDS dimensions.");
+        int offset = 128;
+        for (int level = 0; level < levels; ++level)
+        {
+            int end = offset + ((height + 3) / 4) * ((width + 3) / 4) * 8;
+            if (end > data.Length) throw new ArgumentException("Truncated DDS mipchain.");
+            for (; offset < end; offset += 8)
+            {
+                ushort a = BitConverter.ToUInt16(data, offset);
+                ushort b = BitConverter.ToUInt16(data, offset + 2);
+                uint selectors = BitConverter.ToUInt32(data, offset + 4);
+                // Preserve transparent texels from blocks that originally used 3-color BC1.
+                uint mask = a <= b ? selectors & (selectors >> 1) & 0x55555555u : 0;
+                uint output = mask | (mask << 1);
+                int shade = 17 + (((a >> 5) & 63) + ((b >> 5) & 63)) / 10;
+                ushort magenta = (ushort)((shade << 11) | shade);
+                Buffer.BlockCopy(BitConverter.GetBytes(magenta), 0, data, offset, 2);
+                Buffer.BlockCopy(BitConverter.GetBytes(magenta), 0, data, offset + 2, 2);
+                Buffer.BlockCopy(BitConverter.GetBytes(output), 0, data, offset + 4, 4);
+            }
+            width = Math.Max(1, width / 2);
+            height = Math.Max(1, height / 2);
+        }
+    }
+}
+'@
+    $changed += @(foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $work $stem) -Filter '*.dds' -File)) {
+        $bytes = [IO.File]::ReadAllBytes($file.FullName)
+        [MiranteDxt1]::Mark($bytes)
+        [IO.File]::WriteAllBytes($file.FullName,$bytes)
+        $file.Name
+    })
+}
 if (-not $changed) { throw 'No textures were graded.' }
 
 $pack = Join-Path $work "$stem.pack"
@@ -60,6 +111,7 @@ foreach ($file in $expected) {
 }
 [ordered]@{
     Room = 'r100'
+    Diagnostic = [bool]$Diagnostic
     RelativePath = "ImagePackHD\$stem.pack.lfs"
     BaseSHA256 = (Get-FileHash -LiteralPath (Join-Path $source "$stem.pack.lfs")).Hash
     SHA256 = (Get-FileHash -LiteralPath $archive).Hash
